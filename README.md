@@ -1,13 +1,5 @@
-# clj-markdown
+# Read Me
 
-A Clojure library designed to ... well, that part is up to you.
+this one like marked project for clojure language version;
 
-## Usage
-FIX==ME==
-
-## License
-
-Copyright © 2015 FIXME
-
-Distributed under the Eclipse Public License either version 1.0 or (at
-your option) any later version.
+thank for https://github.com/chjj/marked
