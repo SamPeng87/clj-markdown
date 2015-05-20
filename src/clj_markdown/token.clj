@@ -1,10 +1,9 @@
 (ns clj-markdown.token
-  {:use clj-markdown.core})
+  (:use clj-markdown.tags)
+  (:use clj-markdown.funcs))
 ;这个文件会被core引用
 ;一切以token开头的，会按meta中的优先级(:priority)排序后进行分析token的工作
 
-(def tag (create-struct :name :body :attr :children :class :style))
-(def link (create-struct :name :href :title))
 (def regexBase {
                 :newLines "^\\n+"
                 :code "^( {4}[^\\n]+\\n*)+"
@@ -24,29 +23,16 @@
 
 (def regexBullet "(?:[*+-]|\\d+\\.)")
 
-(def regexListItem "^( *)(bull) [^\\n]*(?:\\n(?!\\1bull )[^\\n]*)*")
+(def regexListItems "^( *)(bull) [^\\n]*(?:\\n(?!\\1bull )[^\\n]*)*")
 
-(def regexListItem (clojure.string/replace regexListItem "bull" regexBullet))
+(def regexListItem (clojure.string/replace regexListItems "bull" regexBullet))
 
 (def regexTags "(?!(?:a|em|strong|small|s|cite|q|dfn|abbr|data|time|code|var|samp|kbd|sub|sup|i|b|u|mark|ruby|rt|rp|bdi|bdo|span|br|wbr|ins|del|img)\\b)\\w+(?!:/|[^\\w\\s@]*@)\\b")
 
 (defn executeTranslateProcess
   [src isTop isBlockQuote])
+(declare token)
 
-
-
-(defn- replaceRegex
-  [regexSource & replaceTarget]
-  (let [replaceData (apply list replaceTarget)
-        replaceResult (reduce (fn
-                                [sourceString [name value]]
-                                (clojure.string/replace sourceString name value))
-                              regexSource replaceData)]
-    replaceResult))
-
-(defn- replaceHashMap
-  [source key target]
-  (assoc source key target))
 
 
 (def regexReplaced (-> regexBase
@@ -69,6 +55,7 @@
                                                                 ["tag" (clojure.string/join "" ["<" regexTags])]
                                                                 ["def" (regexBase :def)]))
                        ))
+
 (defmacro regex
   [name]
   (let [regexSource (regexReplaced name)]
@@ -77,114 +64,108 @@
 (defn tokenNewlines
   ;换行符
   {:pattern  (regex :newLines)
-   :priority 1
-   :continue true}
-  [src result isTop isQuoteBlock cap]
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token newline")
-  [(subs src (count (first cap)))
-   (conj result (struct tag "newline"))
-   isTop isQuoteBlock])
+  (->NewLine))
 
 (defn tokenCode
   {:pattern  (regex :code)
-   :priority 2
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token code")
   (let [pattern (. java.util.regex.Pattern compile "^ {4}" java.util.regex.Pattern/MULTILINE) ]
-    [(subs src (count (first cap)))
-     (conj result (struct tag "code"
-                          (clojure.string/replace
-                            (clojure.string/replace (first cap) pattern "")
-                            #"\n+$" "")
-                          ))
-     isTop isQuoteBlock]))
+    (->Code
+      (clojure.string/replace
+        (clojure.string/replace (first cap) pattern "")
+        #"\n+$" "")
+      nil
+      )))
 
 (defn tokenFences
-  {:pattern (regex :fences)
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+  {
+   :pattern (regex :fences)
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token fences gfm code syntex")
-  [(subs src (count (first cap)))
-   (conj result (struct tag "code"
-                        (get cap 3)
-                        {:lang (get cap 2)}
-                        ))
-   isTop isQuoteBlock])
+  (->Code
+    (get cap 3)
+    (get cap 2)
+    ))
 
 (defn tokenHeading
   ;标题栏
-  {:pattern  (regex :heading)
-   :priority 3
-   :continue false
+  {
+   :pattern  (regex :heading)
+   :isTop -1
+   :isBlockquote -1
    }
-  [src result isTop isQuoteBlock cap]
+  [cap & status]
   (println "token heading")
-  [(subs src (count (first cap)))
-   (conj result (struct tag "heading"
-                        (last cap)
-                        {:depth (count (get cap 1))}
-                        ))
-   isTop isQuoteBlock])
+  (->Heading
+    (last cap)
+    (count (get cap 1))
+    ))
 
 (defn tokenParagraph
-  {:pattern  (regex :paragraph)
-   :priority 3
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+  {
+   :pattern  (regex :paragraph)
+   :isTop 1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token paragraph")
   (let [body (get cap 1)
         endChar (get body (- (count body) 1))
         resultBody (if (= endChar \newline)
                      (subs body 0 (- (count body) 1))
                      body)]
-    [(subs src (count (first cap)))
-     (conj result (struct tag "paragraph" resultBody))
-     isTop isQuoteBlock]))
+    (->Paragraph resultBody)))
 
 (defn tokenHr
-  {:pattern  (regex :hr)
-   :priority 4
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+  {
+   :pattern  (regex :hr)
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token hr")
-  [(subs src (count (first cap)))
-   (conj result (struct tag "hr"))
-   isTop isQuoteBlock])
+  (->Hr))
 
 (defn tokenlHeading
-  {:pattern (regex :lheading)
-   :priority 6
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+  {
+   :pattern (regex :lheading)
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token lHeading")
-  [(subs src (count (first cap)))
-   (conj result (struct tag "heading"
-                        (get cap 1)
-                        {:depth (= (get cap 2) "=")}
-                        ))
-   isTop isQuoteBlock])
+  (->Heading
+    (get cap 1)
+    {:depth (= (get cap 2) "=")}
+    ))
 
 (defn tokenBlockquote
-  {:pattern  (regex :blockquote)
-   :priority 7
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+  {
+   :pattern  (regex :blockquote)
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token blockquote")
-  (println "blockquote start")
-  (let [src (subs src (count (first cap)))
+  (let [
+        statusTemp (apply hash-map status)
         pattern (. java.util.regex.Pattern compile "^ *> ?" java.util.regex.Pattern/MULTILINE)
         capTemp (clojure.string/replace (first cap) pattern "")
-        tempResult (executeTranslateProcess capTemp isTop true)
-        blockquoteResult (-> []
-                             (conj (struct tag "blockquote_start"))
-                             (into tempResult)
-                             (conj (struct tag "blockquote_end")))]
-
-    (println "blockquote end")
-    [src
-     (into result blockquoteResult)
-     isTop isQuoteBlock]))
+        tempResult (token capTemp (statusTemp :isTop) true)
+        blockquoteResult (->Blockquote tempResult)]
+     blockquoteResult))
 
 
 (defn- regexMatchAll
@@ -223,179 +204,143 @@
                              next item i l)
               ]
           (recur (inc i) (-> result
-                             (conj (struct tag (if losse
-                                                 "loose_item_start"
-                                                 "list_item_start")))
-                             (into (executeTranslateProcess item false isQuoteBlock))
-                             (conj (struct tag "list_item_end"))) next)
+                             (conj (if losse
+                                     "looseItemStart"
+                                     "itemStart"
+                                     ))
+                             (into (token item false isQuoteBlock))
+                             (conj "itemEnd")) next)
           )))))
 
 (defn- tokenInternalTable
-  [src result isTop isQuoteBlock cap hasLeadingPipe]
-  (if isTop
-    (let [src (subs src (count (first cap)))
-          headers (apply vector (.split (.replaceAll (get cap 1) "^ *| *\\| *$" "" ) " *\\| *"))
-          aligns  (apply vector (.split (.replaceAll (get cap 2) "^ *| *\\| *$" "" ) " *\\| *"))
-          cellses  (apply vector (.split (.replace (get cap 3) "(?: *\\| *)?\\n$" "") "\\n"))]
-      [src
-       (conj result (struct tag "table"
-                            {:header headers
-                             :aligns ((fn
-                                        [alignSource]
-                                        (loop [nextAlign alignSource, result []]
-                                          (if (nil? nextAlign)
-                                            result
-                                            (let [currentAlign (first nextAlign)
-                                                  align (cond
-                                                          (.matches currentAlign "^ *-+: *$") "right"
-                                                          (.matches currentAlign "^ *:-+: *$") "center"
-                                                          (.matches currentAlign "^ *:-+ *$") "left"
-                                                          true nil)]
-                                              (recur (next nextAlign) (conj result align)))))) aligns)
-                             :cells ((fn
-                                       [cellsSource]
-                                       (loop [nextCells cellsSource, result []]
-                                         (if (nil? nextCells)
-                                           result
-                                           (let [currentCells (apply vector (.split (if hasLeadingPipe
-                                                                 (.replaceAll (first nextCells) "^ *\\| *| *\\| *$" "")
-                                                                 (first nextCells)) " *\\| *"))]
-                                             (recur (next nextCells) (conj result currentCells)))))) cellses)}))
-       isTop isQuoteBlock])))
+  [cap hasLeadingPipe]
+  (let [
+        headers (apply vector (.split (.replaceAll (get cap 1) "^ *| *\\| *$" "" ) " *\\| *"))
+        aligns  (apply vector (.split (.replaceAll (get cap 2) "^ *| *\\| *$" "" ) " *\\| *"))
+        cellses  (apply vector (.split (.replace (get cap 3) "(?: *\\| *)?\\n$" "") "\\n"))]
+    (->Table
+      headers
+      ((fn
+         [alignSource]
+         (loop [nextAlign alignSource, result []]
+           (if (nil? nextAlign)
+             result
+             (let [currentAlign (first nextAlign)
+                   align (cond
+                           (.matches currentAlign "^ *-+: *$") "right"
+                           (.matches currentAlign "^ *:-+: *$") "center"
+                           (.matches currentAlign "^ *:-+ *$") "left"
+                           true nil)]
+               (recur (next nextAlign) (conj result align)))))) aligns)
+      ((fn
+         [cellsSource]
+         (loop [nextCells cellsSource, result []]
+           (if (nil? nextCells)
+             result
+             (let [currentCells (apply vector (.split (if hasLeadingPipe
+                                                        (.replaceAll (first nextCells) "^ *\\| *| *\\| *$" "")
+                                                        (first nextCells)) " *\\| *"))]
+               (recur (next nextCells) (conj result currentCells)))))) cellses))))
 
 (defn tokenTable
   {:pattern  (regex :table)
-   :priority 8
-   :continue false}
-  [src result isTop isQuoteBlock cap]
-  (tokenInternalTable src result isTop isQuoteBlock cap true))
+   :isTop 1
+   :isBlockquote -1
+   }
+  [cap & status]
+  (tokenInternalTable cap true))
 
 (defn tokenNpTable
-  {:pattern  (regex :nptable)
-   :priority 8
-   :continue false}
-  [src result isTop isQuoteBlock cap]
-  (tokenInternalTable src result isTop isQuoteBlock cap false))
+  {
+   :pattern  (regex :nptable)
+   :isTop 1
+   :isBlockquote -1
+   }
+  [cap & status]
+  (tokenInternalTable cap false))
 
 (defn tokenList
   {:pattern  (regex :list)
-   :priority 8
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token list")
-  (let [src (subs src (count (first cap)))
-        bull (get cap 2)
-        listVector (conj []
-                         (struct tag "list_start" {:ordered (> (count bull) 1)}))
+  (let [bull (get cap 2)
+        status (apply hash-map status)
+        ordered (> (count bull) 1)
         cap (regexMatchAll (first cap) regexListItem)
-        itemVector (parseItemVector cap bull isQuoteBlock)]
-    [src (into result (-> listVector
-                          (conj itemVector)
-                          (conj (struct tag "list_end"))))
-     isTop isQuoteBlock]))
+        itemVector (parseItemVector cap bull (status :isBlockquote))]
+        (->Lists ordered itemVector)))
 
 (defn tokenHtml
-  {:pattern  (regex :html)
-   :priority 9
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+  {
+   :pattern  (regex :html)
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
   (println "token html")
   (let [body (first cap)
-        match (count body)
         tagName (get cap 1)]
-    [(subs src match)
-     (conj result (struct tag "html"
-                          body
-                          {:pre (or (= tagName "pre")
-                                    (= tagName "script")
-                                    (= tagName "style"))}))
-     isTop isQuoteBlock]))
+    (->Html
+      body
+      {:pre (or (= tagName "pre")
+                (= tagName "script")
+                (= tagName "style"))})))
 
 (defn tokenDef
   {:pattern  (regex :def)
-   :priority 10
-   :continue false}
-  [src result isTop isQuoteBlock cap]
+   :isTop 1
+   :isBlockquote 0
+   }
+  [cap & status]
   (println "token def")
-  (if (and (not isQuoteBlock) isTop)
-    (let [result (conj result (struct link (clojure.string/lower-case (get cap 1))
-                                      (get cap 2)
-                                      (get cap 3)))]
-      [(subs src (count (first cap)))
-       result
-       isTop isQuoteBlock])))
-
-(defn tokenText
-  {:pattern  (regex :text)
-   :priority 11
-   :continue false}
-  [src result isTop isQuoteBlock cap]
-  (println "token text")
-  [(subs src (count (first cap)))
-   (conj result (struct tag "text"
-                        (first cap)))
-   isTop isQuoteBlock])
-
-(def tokenProcess [
-                   #'tokenNewlines
-                   #'tokenCode
-                   #'tokenFences
-                   #'tokenHeading
-                   #'tokenNpTable
-                   #'tokenHr
-                   #'tokenBlockquote
-                   #'tokenList
-                   #'tokenHtml
-                   #'tokenDef
-                   #'tokenTable
-                   #'tokenParagraph
-                   #'tokenText])
-
-(defn chairMethod
-  "从->宏里面修改来的。因为我需要一个后面的参数也是动态的数组，不是写死的"
-  {:added "1.0"}
-  [x  forms]
-  (loop [x x, forms forms]
-    (if forms
-      (let [form (first forms)
-            threaded (if (seq? form)
-                       (with-meta `(~(first form) ~x ~@(next form)) (meta form))
-                       (form x))]
-        (if ((meta threaded) :continue)
-          (recur threaded (next forms))
-          threaded)
-        )
-      x)))
-
-
-(defn partialFuncCheck
-  "创建处理方法的结合"
-  [executeFuncNamespace]
-  (let [result (partial (defn tmpFunc
-                          [funcName [src result isTop isQuoteBlock]]
-                          (let [metaData (meta funcName)
-                                pattern (metaData :pattern)
-                                matcher (re-matcher pattern src)
-                                cap (re-find matcher)]
-                            (if (nil? cap)
-                              (let [rResult [src result isTop isQuoteBlock]]
-                                (with-meta rResult {:continue true}))
-                              (let [rResult (funcName src result isTop isQuoteBlock cap)]
-                                (with-meta rResult {:continue (metaData :continue)}))))
-                          ) executeFuncNamespace)]
+  (let [result (->Link (get cap 2)
+                       (get cap 3)
+                       (clojure.string/lower-case (get cap 1)))]
     result))
 
-(defn createPartialFuncs
-  []
-  (let [funcs tokenProcess]
-    (map partialFuncCheck funcs)))
+(defn tokenText
+  {
+   :pattern  (regex :text)
+   :isTop -1
+   :isBlockquote -1
+   }
+  [cap & status]
+  (println "token text")
+  (->Text (first cap)))
 
-(defn executeTranslateProcess
-  [src isTop isQuoteBlock]
-  (loop [src src, result [], isTop isTop, isQuoteBlock isQuoteBlock]
-    (if (= src "")
-      result
-      (let [translateFunctions (createPartialFuncs)
-            [rSrc rResult isTop isQuoteBlock] (chairMethod [src result isTop isQuoteBlock]
-                                                           translateFunctions)]
-        (recur rSrc rResult isTop isQuoteBlock)))))
+(defn- resultJoin
+  ([]
+    [])
+  ([source target]
+    (if (or (list? target) (vector? target))
+      (into source target)
+      (conj source target))))
+
+(defn token
+  [src isTop isBlockquote]
+  (let [tokenMethod [#'tokenNewlines
+                     #'tokenCode
+                     #'tokenFences
+                     #'tokenHeading
+                     #'tokenNpTable
+                     #'tokenlHeading
+                     #'tokenHr
+                     #'tokenBlockquote
+                     #'tokenList
+                     #'tokenHtml
+                     #'tokenDef
+                     #'tokenTable
+                     #'tokenParagraph
+                     #'tokenText]]
+    (whileTranslateString
+      src
+      {:isTop isTop
+       :isBlockquote isBlockquote}
+      tokenMethod
+      executeInputByCheck
+      checkMethodPattern
+      resultJoin)))
+
